@@ -96,15 +96,17 @@ function showAuth() {
 
 // E-posta onay token'ını URL'den yakala
 function handleEmailConfirmation() {
+    const params = new URLSearchParams(window.location.search);
+    const tokenHash = params.get('token_hash');
+    const type = params.get('type');
+
+    // Hash fragment ile gelen token (eski flow)
     const hash = window.location.hash;
     if (hash && hash.includes('access_token')) {
-        const params = new URLSearchParams(hash.substring(1));
-        const accessToken = params.get('access_token');
-        const refreshToken = params.get('refresh_token');
-        const type = params.get('type');
-
-        if (accessToken && type === 'signup') {
-            // Token'dan kullanıcı bilgisi al
+        const hashParams = new URLSearchParams(hash.substring(1));
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
+        if (accessToken) {
             fetch(`${AUTH}/user`, {
                 headers: {
                     'apikey': SUPABASE_KEY,
@@ -112,12 +114,54 @@ function handleEmailConfirmation() {
                 }
             }).then(r => r.json()).then(user => {
                 saveSession({ access_token: accessToken, refresh_token: refreshToken, user });
-                window.location.hash = '';
+                window.history.replaceState({}, '', window.location.pathname);
                 showApp();
             });
             return true;
         }
     }
+
+    // token_hash ile gelen onay (PKCE / yeni flow)
+    if (tokenHash && type) {
+        fetch(`${AUTH}/verify`, {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token_hash: tokenHash, type })
+        }).then(r => {
+            if (!r.ok) throw new Error('Onay başarısız');
+            return r.json();
+        }).then(data => {
+            saveSession(data);
+            window.history.replaceState({}, '', window.location.pathname);
+            showApp();
+        }).catch(() => {
+            showAuth();
+            showMessage('E-posta onayı başarısız veya link süresi dolmuş.', 'error');
+        });
+        return true;
+    }
+
+    // ?code= ile gelen PKCE code exchange
+    const code = params.get('code');
+    if (code) {
+        fetch(`${AUTH}/token?grant_type=pkce`, {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auth_code: code })
+        }).then(r => {
+            if (!r.ok) throw new Error('Code exchange başarısız');
+            return r.json();
+        }).then(data => {
+            saveSession(data);
+            window.history.replaceState({}, '', window.location.pathname);
+            showApp();
+        }).catch(() => {
+            showAuth();
+            showMessage('Giriş başarısız, lütfen tekrar deneyin.', 'error');
+        });
+        return true;
+    }
+
     return false;
 }
 
